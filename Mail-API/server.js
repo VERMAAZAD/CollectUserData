@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const bodyParser = require("body-parser");
+const dns = require("dns").promises;
 
 require('dotenv').config();
 // Init
@@ -29,6 +30,29 @@ const userSchema = new mongoose.Schema({
 
 const CollectUserData = mongoose.model("CollectUserData", userSchema);
 
+// --- Email validation helpers ---
+function isValidEmailFormat(email) {
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(String(email).toLowerCase());
+}
+
+async function hasMxRecord(email) {
+  try {
+    const domain = email.split("@")[1];
+    const records = await dns.resolveMx(domain);
+    return records && records.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Optional: basic disposable domain list (expand as needed)
+const disposableDomains = ["tempmail.com", "10minutemail.com", "mailinator.com"];
+function isDisposable(email) {
+  const domain = email.split("@")[1];
+  return disposableDomains.includes(domain);
+}
+
 // API to save user
 app.post("/api/subscribe", async (req, res) => {
   try {
@@ -37,6 +61,38 @@ app.post("/api/subscribe", async (req, res) => {
 
     if (!name || !email) {
       return res.status(400).json({ success: false, message: "Name and email are required" });
+    }
+    
+
+    
+    // 1) Check email format
+    if (!isValidEmailFormat(email)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid email format" });
+    }
+
+    // 2) Check disposable domain
+    if (isDisposable(email)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Disposable emails not allowed" });
+    }
+
+    // 3) Check MX record
+    const mxValid = await hasMxRecord(email);
+    if (!mxValid) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email domain not valid" });
+    }
+
+
+
+     // check if email already exists
+    const existingUser = await CollectUserData.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Email already subscribed!" });
     }
 
     const newUser = new CollectUserData({ name, email, landingPageUrl });
